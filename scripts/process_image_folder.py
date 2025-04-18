@@ -100,13 +100,18 @@ def run_folder_processing(reid_config, reid_model, gallery, args):
     start_time = time.time()
     processed_count = 0
     error_count = 0
-
+    mi_time = 100
+    ma_time = 0
     for i, img_file in enumerate(image_files):
         img_path = os.path.join(input_folder, img_file)
         # print(f"\n--- Processing Image {i+1}/{len(image_files)}: {img_file} ---") # Verbose log
 
         # --- 1. Extract Feature ---
+        time1 = time.time()
         query_feature = reid_model.extract_feature_single(img_path)
+        extract_time = time.time() - time1
+        mi_time = min(extract_time,mi_time)
+        ma_time = max(extract_time,ma_time)
 
         if query_feature is None:
             print(f"Skipping image {img_file} due to feature extraction error.")
@@ -135,6 +140,8 @@ def run_folder_processing(reid_config, reid_model, gallery, args):
 
     total_time = time.time() - start_time
     print(f"\n--- Folder Processing Summary ---")
+    print(f"Min time extract:{mi_time}")
+    print(f"Max time extract:{ma_time}")
     print(f"Processed {processed_count} images ({error_count} errors) in {total_time:.2f} seconds.")
     if gallery: print(f"Total unique IDs assigned/found: {gallery.get_gallery_size()}")
 

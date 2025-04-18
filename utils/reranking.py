@@ -39,7 +39,7 @@ def is_reranking_available():
 def perform_re_ranking(query_features, gallery_features, k1, k2, lambda_value):
     """
     Wrapper for the k-reciprocal re_ranking function from CLIP-ReID.
-    Handles input/output types (assumes function expects NumPy arrays) and availability check.
+    Passes PyTorch tensors directly to the original function and handles availability check.
 
     Args:
         query_features (torch.Tensor): Query features (N, D) on any device.
@@ -53,42 +53,57 @@ def perform_re_ranking(query_features, gallery_features, k1, k2, lambda_value):
                               or None if re-ranking is unavailable or fails. Lower values indicate higher similarity.
     """
     if not _reranking_available or clip_reid_reranking_func is None:
-        # print("Re-ranking is not available.") # Avoid spamming logs
+        # print("Re-ranking is not available.") # Optional log
         return None
 
     if query_features is None or gallery_features is None or query_features.shape[0] == 0 or gallery_features.shape[0] == 0:
         # print("Warning: Empty query or gallery features provided for re-ranking.")
-        return torch.empty((query_features.shape[0] if query_features is not None else 0,
-                            gallery_features.shape[0] if gallery_features is not None else 0)) # Return empty tensor
+        # Return empty tensor matching expected output dimensions if possible
+        num_q = query_features.shape[0] if query_features is not None else 0
+        num_g = gallery_features.shape[0] if gallery_features is not None else 0
+        return torch.empty((num_q, num_g), device=query_features.device if query_features is not None else 'cpu')
 
 
     try:
-        # print("Applying re-ranking...") # Avoid spamming logs
+        # print("Applying re-ranking...") # Optional log
         start_time = time.time()
 
-        # --- Convert tensors to NumPy arrays on CPU (Common requirement for cython/numpy based re-ranking) ---
-        qf_device = query_features.device # Store original device
-        qf_np = query_features.float().cpu().numpy() # Use float() for consistency
-        gf_np = gallery_features.float().cpu().numpy()
+        # --- QUAN TRỌNG: Truyền trực tiếp PyTorch tensors ---
+        # Hàm re_ranking gốc sẽ xử lý tensor và chuyển sang numpy khi cần
+        qf_device = query_features.device # Lưu lại device gốc
+        # Đảm bảo dtype phù hợp nếu cần (thường float32)
+        qf = query_features.float()
+        gf = gallery_features.float().to(qf.device) # Đảm bảo cùng device
 
-        # Call the imported function
-        dist_mat_np = clip_reid_reranking_func(qf_np, gf_np, k1, k2, lambda_value)
+        # --- Xóa dòng print debug đã thêm trước đó ---
+        # print(f"DEBUG: Type of clip_reid_reranking_func: {type(clip_reid_reranking_func)}")
+        # print(f"DEBUG: Value of clip_reid_reranking_func: {clip_reid_reranking_func}")
+        # ---------------------------------------------
 
-        # --- Convert distance matrix back to torch.Tensor on original device ---
+        # Gọi hàm gốc với Pytorch Tensors
+        dist_mat_np = clip_reid_reranking_func(qf, gf, k1, k2, lambda_value)
+
+        # --- Convert kết quả (thường là NumPy array) về lại torch.Tensor trên device gốc ---
         if isinstance(dist_mat_np, np.ndarray):
              dist_mat_tensor = torch.from_numpy(dist_mat_np).to(qf_device)
+        # Xử lý trường hợp hàm gốc trả về tensor (ít khả năng hơn với code bạn cung cấp)
+        elif isinstance(dist_mat_np, torch.Tensor):
+             dist_mat_tensor = dist_mat_np.to(qf_device)
         else:
-             # If the function unexpectedly returns a tensor, ensure it's on the right device
-             dist_mat_tensor = dist_mat_np.to(qf_device) if hasattr(dist_mat_np, 'to') else None
-             if dist_mat_tensor is None:
-                  print("Warning: Re-ranking function returned unexpected type.")
+             print(f"Warning: Re-ranking function returned unexpected type: {type(dist_mat_np)}")
+             dist_mat_tensor = None # Hoặc xử lý lỗi phù hợp
 
-        # print(f"Re-ranking completed in {time.time() - start_time:.4f} seconds.") # Avoid spamming logs
+        # print(f"Re-ranking completed in {time.time() - start_time:.4f} seconds.") # Optional log
         return dist_mat_tensor
 
+    except TypeError as e: # Bắt lỗi cụ thể hơn nếu vẫn xảy ra
+         print(f"TypeError during re-ranking execution: {e}")
+         print("Double-check input types and the original re_ranking function.")
+         import traceback
+         traceback.print_exc()
+         return None
     except Exception as e:
         print(f"Error during re-ranking execution: {e}")
-        # Consider logging the traceback for debugging
-        # import traceback
-        # traceback.print_exc()
+        import traceback
+        traceback.print_exc()
         return None # Indicate failure
