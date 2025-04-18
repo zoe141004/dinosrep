@@ -70,12 +70,21 @@ person-reid-project/
 
 ## Usage
 
+***Overall command***:
+```bash
+python run.py <task> <arg1> <arg2> ...
+```
+*   **Tasks:** 
+    + video: full pipeline processing video (detection + tracking + re-id)
+    + folder: processing a folder of cropped images (extract vector and compare (with re-raking or not))
+    + image: processing a single image (only extract vector from input image)
+
 ### 1. Processing a Video File
 
 Run the main pipeline script:
 
 ```bash
-python main_pipeline.py --input path/to/your/video.mp4 --output output/processed_video.mp4
+python run.py video --input data/my_video.mp4 --output output/test_video.mp4
 ```
 Command-line arguments:
 ```
@@ -85,12 +94,12 @@ Command-line arguments:
 --yolo-config: Path to the YOLO configuration file (default: configs/yolo_config.yaml).
 --no-display: Add this flag to run without showing the video window.
 ```
-2. Processing a Folder of Cropped Images
+### 2. Processing a Folder of Cropped Images
 Run the folder processing script:
 
 ```Bash
-
-python scripts/process_image_folder.py --input-folder path/to/your/cropped_images/ --output-folder output/grouped_images/
+python run.py folder --input-folder data/cropped_persons/ --output-folder output/test_grouping/ --use-re-ranking
+python run.py folder --input-folder data/cropped_persons/ --output-folder output/test_grouping_no_rerank/ --no-re-ranking
 ```
 Command-line arguments:
 ```
@@ -113,14 +122,14 @@ Configuration Details
 * *torch.compile:* Requires PyTorch 2.0+. It can improve performance but might increase initial model loading time.
 Memory: Running both YOLO and CLIP-ReID can consume significant GPU memory.
 
-## Extracting Feature from a Single Image
+### 3. Extracting Feature from a Single Image
 
 You can use the provided script to extract the ReID feature vector for a single person image.
 
 **Usage:**
 
 ```bash
-python scripts/extract_single_feature.py -i path/to/your/person_image.jpg [options]
+python run.py extract --image data/sample_images/person1.jpg --output output/person1_feat.pt [options]
 ```
 Arguments:
 ```
