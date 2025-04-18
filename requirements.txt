@@ -1,0 +1,32 @@
+# requirements.txt
+
+# --- Core ML/GPU ---
+# CHỌN PHIÊN BẢN PHÙ HỢP VỚI MÁY LOCAL CỦA BẠN (CUDA version)
+# Ví dụ: Nếu dùng CUDA 11.8 và PyTorch 2.x
+# torch>=2.0.0 torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118
+# Hoặc nếu bạn đang dùng bản cụ thể khác, hãy ghi rõ version ở đây
+torch
+torchvision 
+torchaudio
+
+# --- CLIP-ReID Dependencies ---
+yacs >= 0.1.8
+timm >= 0.6.0  # Kiểm tra version tương thích với torch
+scikit-image
+tqdm
+ftfy
+regex
+# einops # Thêm nếu CLIP-ReID của bạn yêu cầu
+
+# --- YOLO / Detection ---
+ultralytics # Thường dùng bản mới nhất
+
+# --- Utilities ---
+numpy
+opencv-python-headless # Hoặc opencv-python
+Pillow # PIL
+PyYAML # Để đọc file config .yaml
+matplotlib # Cần cho script xử lý folder ảnh nếu có hiển thị
+opencv-python
+opencv-contrib-python
+timm

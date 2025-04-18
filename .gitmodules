@@ -1,0 +1,3 @@
+[submodule "CLIP-ReID"]
+	path = CLIP-ReID
+	url = https://github.com/Syliz517/CLIP-ReID.git

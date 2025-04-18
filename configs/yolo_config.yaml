@@ -1,0 +1,15 @@
+# configs/yolo_config.yaml
+
+# --- Model ---
+yolo_model_path: 'models/weights/yolo11m.pt' # Sửa tên file nếu cần
+# Device: 'auto', 'cuda:0', 'cuda:1', 'cpu'
+device: 'auto'
+
+# --- Tracking Parameters (ByteTrack) ---
+tracker_type: 'bytetrack.yaml'
+tracking_persist: True
+tracking_imgsz: 640
+tracking_conf: 0.4
+tracking_iou: 0.5
+tracking_classes: [0] # Chỉ theo dõi lớp 'person'
+tracking_verbose: False

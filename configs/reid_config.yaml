@@ -1,0 +1,29 @@
+# configs/reid_config.yaml
+
+# --- Model & Checkpoint ---
+clip_reid_config_base: 'configs/vit_clipreid_base.yml'
+clip_reid_checkpoint: 'models/weights/MSMT17_clipreid_12x12sie_ViT-B-16_60.pth' # Sửa tên file nếu cần
+transformer_type: 'ViT-B-16'
+name: 'ViT-B-16'
+sie_camera: True
+sie_view: True
+stride_size: [12, 12]
+num_classes: 1041 # Số class của MSMT17 (quan trọng khi load checkpoint)
+reid_input_size: [256, 128] # height, width
+
+# --- Device ---
+# 'auto', 'cuda:0', 'cuda:1', 'cpu'
+device: 'auto'
+
+# --- Processing Parameters ---
+reid_interval: 10 # Chạy ReID mỗi 10 frame trong video
+similarity_threshold: 0.87 # Ngưỡng cosine similarity ban đầu
+use_re_ranking: False # Tắt cho video pipeline, bật nếu chạy script xử lý folder ảnh
+k1: 10 # Tham số re-ranking
+k2: 3
+lambda_value: 0.5
+expected_feature_dim: 1280 # Kích thước feature vector của ViT-B-16 CLIP-ReID này
+
+# --- Tối ưu hóa ---
+use_torch_compile: True # True nếu dùng PyTorch 2.0+
+use_mixed_precision: True # True nếu dùng GPU và muốn thử AMP
