@@ -6,7 +6,7 @@ This project implements a pipeline for detecting people in a video, tracking the
 
 ## Features
 
-* **Detection & Tracking:** Uses YOLOv8 with ByteTrack for robust person detection and tracking.
+* **Detection & Tracking:** Uses YOLOv11 with ByteTrack for robust person detection and tracking.
 * **Re-Identification:** Employs CLIP-ReID (ViT-B-16) to extract appearance features.
 * **ID Assignment:** Assigns consistent ReID numbers to tracked individuals across frames or across images in a folder.
 * **Optimized Pipeline:** Includes optimizations like batch processing, `torch.compile` (PyTorch 2.0+), and optional mixed-precision inference for faster video processing.
@@ -32,7 +32,7 @@ person-reid-project/
 
 1.  **Clone the Repository:**
     ```bash
-    git clone <your-repository-url>
+    git clone https://github.com/zoe141004/dinosrep.git
     cd person-reid-project
     ```
 
@@ -55,7 +55,7 @@ person-reid-project/
 4.  **Install Dependencies:**
     Make sure you have the correct CUDA version installed if using GPU. Install the required Python packages:
     ```bash
-    pip install -r requirements.txt
+    pip install --user -r requirements.txt
     ```
     *Note:* The `requirements.txt` specifies PyTorch versions. If you encounter issues, ensure the installed PyTorch version matches your CUDA version. You might need to manually install a specific PyTorch build from their website.
 
@@ -76,6 +76,7 @@ Run the main pipeline script:
 
 ```bash
 python main_pipeline.py --input path/to/your/video.mp4 --output output/processed_video.mp4
+```
 Command-line arguments:
 
 --input: (Required) Path to the input video file.
@@ -86,9 +87,10 @@ Command-line arguments:
 2. Processing a Folder of Cropped Images
 Run the folder processing script:
 
-Bash
+```Bash
 
 python scripts/process_image_folder.py --input-folder path/to/your/cropped_images/ --output-folder output/grouped_images/
+```
 Command-line arguments:
 
 --input-folder: (Required) Path to the folder containing pre-cropped person images.
@@ -109,5 +111,17 @@ Re-ranking: While potentially more accurate, re-ranking significantly increases 
 torch.compile: Requires PyTorch 2.0+. It can improve performance but might increase initial model loading time.
 Memory: Running both YOLO and CLIP-ReID can consume significant GPU memory.
 
-code demo video:
-python -m main_pipeline --input data/Recording-20250417_140124.webm --output processed_video.mp4
+## Extracting Feature from a Single Image
+
+You can use the provided script to extract the ReID feature vector for a single person image.
+
+**Usage:**
+
+```bash
+python scripts/extract_single_feature.py -i path/to/your/person_image.jpg [options]
+```
+Arguments:
+-i, --image: (Required) Path to the input image file.
+-o, --output: (Optional) Path to save the extracted feature vector. Use .pt extension for PyTorch tensor format or .npy for NumPy format (e.g., output/image_feature.pt).
+--config: (Optional) Path to the ReID configuration file (default: configs/reid_config.yaml).
+--show: (Optional) Add this flag to display the input image after processing.
