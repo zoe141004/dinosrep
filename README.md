@@ -14,7 +14,7 @@ This project implements a pipeline for detecting people in a video, tracking the
 * **Modular Structure:** Code is organized into modules for configuration, models, utilities, and main scripts.
 
 ## Project Structure
-
+```
 person-reid-project/
 │
 ├── CLIP-ReID/                # Git submodule (CLIP-ReID library)
@@ -26,7 +26,7 @@ person-reid-project/
 ├── main_pipeline.py          # Main script for video processing
 ├── requirements.txt          # Python dependencies
 └── README.md                 # This file
-
+```
 
 ## Setup Instructions
 
@@ -78,12 +78,13 @@ Run the main pipeline script:
 python main_pipeline.py --input path/to/your/video.mp4 --output output/processed_video.mp4
 ```
 Command-line arguments:
-
+```
 --input: (Required) Path to the input video file.
 --output: Path to save the output video with tracking and ReID results (default: output/result_video.mp4).
 --reid-config: Path to the ReID configuration file (default: configs/reid_config.yaml).
 --yolo-config: Path to the YOLO configuration file (default: configs/yolo_config.yaml).
 --no-display: Add this flag to run without showing the video window.
+```
 2. Processing a Folder of Cropped Images
 Run the folder processing script:
 
@@ -122,7 +123,9 @@ You can use the provided script to extract the ReID feature vector for a single 
 python scripts/extract_single_feature.py -i path/to/your/person_image.jpg [options]
 ```
 Arguments:
+```
 -i, --image: (Required) Path to the input image file.
 -o, --output: (Optional) Path to save the extracted feature vector. Use .pt extension for PyTorch tensor format or .npy for NumPy format (e.g., output/image_feature.pt).
 --config: (Optional) Path to the ReID configuration file (default: configs/reid_config.yaml).
 --show: (Optional) Add this flag to display the input image after processing.
+```
