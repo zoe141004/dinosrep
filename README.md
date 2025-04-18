@@ -92,7 +92,7 @@ Run the folder processing script:
 python scripts/process_image_folder.py --input-folder path/to/your/cropped_images/ --output-folder output/grouped_images/
 ```
 Command-line arguments:
-
+```
 --input-folder: (Required) Path to the folder containing pre-cropped person images.
 --reid-config: Path to the ReID configuration file (default: configs/reid_config.yaml).
 --use-re-ranking / --no-re-ranking: Enable or disable re-ranking (default: enabled for folder processing).
@@ -101,14 +101,15 @@ Command-line arguments:
 --zip-output: Add this flag to create a zip archive of the output folder.
 --zip-filename: Base name for the zip file (default: grouped_images).
 --no-display: Add this flag to run without showing images using Matplotlib during processing.
+```
 Configuration Details
-configs/reid_config.yaml: Controls ReID model paths, input size, similarity thresholds, re-ranking parameters, processing interval (for video), and optimization flags.
-configs/yolo_config.yaml: Controls YOLO model path, detection/tracking confidence, IoU thresholds, tracker type, and device.
-configs/vit_clipreid_base.yml: Base configuration for CLIP-ReID model architecture (usually not modified unless changing fundamental model parameters).
-Notes
-Performance: Video processing speed depends heavily on GPU capabilities, video resolution, and the number of people detected. ReID calculation is the most computationally intensive part. Adjusting reid_interval in reid_config.yaml affects the trade-off between FPS and ReID update frequency.
-Re-ranking: While potentially more accurate, re-ranking significantly increases computation time and is often disabled (use_re_ranking: False in reid_config.yaml) for real-time video processing. It's generally recommended for offline tasks like processing image folders.
-torch.compile: Requires PyTorch 2.0+. It can improve performance but might increase initial model loading time.
+* configs/reid_config.yaml: Controls ReID model paths, input size, similarity thresholds, re-ranking parameters, processing interval (for video), and optimization flags.
+* configs/yolo_config.yaml: Controls YOLO model path, detection/tracking confidence, IoU thresholds, tracker type, and device.
+* configs/vit_clipreid_base.yml: Base configuration for CLIP-ReID model architecture (usually not modified unless changing fundamental model parameters).
+**Notes**
+* *Performance:* Video processing speed depends heavily on GPU capabilities, video resolution, and the number of people detected. ReID calculation is the most computationally intensive part. Adjusting reid_interval in reid_config.yaml affects the trade-off between FPS and ReID update frequency.
+* *Re-ranking:* While potentially more accurate, re-ranking significantly increases computation time and is often disabled (use_re_ranking: False in reid_config.yaml) for real-time video processing. It's generally recommended for offline tasks like processing image folders.
+* *torch.compile:* Requires PyTorch 2.0+. It can improve performance but might increase initial model loading time.
 Memory: Running both YOLO and CLIP-ReID can consume significant GPU memory.
 
 ## Extracting Feature from a Single Image
