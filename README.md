@@ -105,12 +105,11 @@ Command-line arguments:
 --o,--output: Path to save the output video with tracking and ReID results (default: output/run_video_output.mp4).
 --no-display: Add this flag to run without showing the video window.
 --use-re-ranking / --no-re-ranking: Enable/disable re-ranking (overrides config, default uses config setting). Warning: Enabling significantly impacts performance.
---target-fps <fps>: Attempt to limit processing FPS (overrides config).
 --reid-batch-size <size>: Set ReID inference batch size (overrides config).
 ```
 Example: 
 ```bash
-python run.py video -i data/sample_video.mp4 -o output/result.mp4 --target-fps 25 --reid-batch-size 32
+python run.py video -i data/sample_video.mp4 -o output/result.mp4  --reid-batch-size 32
 ```
 ### 2. Processing a Folder of Cropped Images (folder)
 Run the folder processing script:
@@ -165,7 +164,6 @@ Arguments:
 -o, --output <output_video_path>: Save the processed stream to a video file (optional). Warning: This file can become very large for long-running streams.
 --no-display: Disable the preview window.
 --use-re-ranking / --no-re-ranking: Enable/disable re-ranking (overrides config, default: disabled for live task due to performance cost).
---target-fps <fps>: Attempt to limit processing FPS (overrides config).
 --reid-batch-size <size>: Set ReID inference batch size (overrides config).
 ```
 Example:
