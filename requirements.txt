@@ -31,3 +31,4 @@ opencv-python
 opencv-contrib-python
 timm
 streamlink
+lap #for ultralytics
