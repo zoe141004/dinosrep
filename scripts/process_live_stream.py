@@ -277,7 +277,8 @@ if __name__ == "__main__":
 
     # --- Tự động lấy URL stream nếu là link YouTube (cần streamlink) ---
     stream_url_to_use = args.stream_url
-    if args.stream_url and ('https://www.youtube.com/watch?v=...5' in args.stream_url or 'https://www.youtube.com/watch?v=...6' in args.stream_url):
+    print(args.stream_url())
+    if args.stream_url and ('https://www.youtube.com/live/' in args.stream_url or 'https://www.youtube.com/live/' in args.stream_url):
          print("[Standalone Mode] YouTube URL detected. Attempting to get direct stream URL via streamlink...")
          import subprocess
          try:

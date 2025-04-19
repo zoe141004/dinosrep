@@ -95,7 +95,7 @@ def run_folder_task(config, args):
 def run_live_task(config, args):
     if run_live_stream_processing is None: print("Error: Live stream processing function not available."); return
     stream_url_to_use = args.stream_url
-    if args.stream_url and ('https://youtu.be/...9' in args.stream_url or 'https://www.youtube.com/live/...0' in args.stream_url):
+    if args.stream_url and ('youtube.com/live/' in args.stream_url or 'https://www.youtube.com/live/' in args.stream_url):
          direct_url = get_stream_url_from_youtube(args.stream_url)
          if direct_url: stream_url_to_use = direct_url
          else: print("Failed to get direct stream URL from YouTube link. Exiting."); return
