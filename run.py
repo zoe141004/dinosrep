@@ -4,6 +4,9 @@ import os
 import sys
 import time # Dùng để đo thời gian load model
 import subprocess # Thêm để gọi streamlink
+import torch 
+import torch._dynamo
+torch._dynamo.config.suppress_errors = True
 
 # --- Đảm bảo các module trong dự án có thể được import ---
 current_dir = os.path.dirname(os.path.abspath(__file__))
@@ -95,6 +98,46 @@ def run_video_task(config, args):
         gallery = ReIDGallery(config['reid'])
         print(f"Models Initialized (Load Time: {time.time() - start_load_time:.2f}s)")
         print(f"Effective Settings: ReRank={config['reid']['use_re_ranking']}, TargetFPS={config['reid'].get('target_fps')}, Batch={config['reid'].get('reid_batch_size')}")
+         # <<< --- THÊM BƯỚC WARM-UP MODEL ReID --- >>>
+        if config['reid'].get('use_torch_compile', False) or True: # Luôn warmup nhẹ nhàng ngay cả khi không compile
+            print("\n--- Warming up ReID model ---")
+            warmup_start_time = time.time()
+            try:
+                reid_cfg = config['reid']
+                device = reid_cfg['device']
+                # Lấy kích thước input và batch size từ config
+                input_h, input_w = reid_cfg['reid_input_size'] # [H, W]
+                batch_size = reid_cfg.get('reid_batch_size', 16) # Dùng batch size config, hoặc 16 nếu nhỏ
+                num_warmup_runs = 5 # Số lần chạy thử
+
+                # Tạo dữ liệu giả (dummy data) - batch ảnh đen hoặc nhiễu
+                # Kích thước (batch, channels, height, width)
+                dummy_input_batch = torch.zeros((batch_size, 3, input_h, input_w), dtype=torch.float32).to(device)
+                # Hoặc dùng ảnh nhiễu: torch.randn((batch_size, 3, input_h, input_w), dtype=torch.float32).to(device)
+
+                print(f"Running {num_warmup_runs} warmup inferences with batch size {batch_size} on device {device}...")
+                for _ in range(num_warmup_runs):
+                    with torch.no_grad(): # Không cần tính gradient khi warmup
+                        # Gọi hàm inference chính (có thể có autocast bên trong)
+                         _ = reid_model.extract_features_optimized([dummy_input_batch[i:i+1].cpu().numpy().transpose(0,2,3,1)[0] for i in range(batch_size)]) # Cần chuyển tensor giả -> list numpy giả
+                        # Hoặc gọi thẳng model nếu hàm extract phức tạp:
+                        # with torch.amp.autocast(device_type='cuda', enabled=reid_cfg.get('use_mixed_precision', False)):
+                        #      _ = reid_model.model(dummy_input_batch)
+
+
+                # Đồng bộ hóa GPU để đảm bảo các tác vụ warmup đã hoàn thành (quan trọng nếu compile)
+                if 'cuda' in str(device):
+                    torch.cuda.synchronize()
+
+                warmup_time = time.time() - warmup_start_time
+                print(f"--- ReID Model Warmup Finished (Time: {warmup_time:.2f} seconds) ---")
+
+            except Exception as e:
+                print(f"Warning: ReID model warmup failed: {e}")
+                # Vẫn tiếp tục chạy nhưng frame đầu có thể chậm
+        # <<< --- KẾT THÚC BƯỚC WARM-UP --- >>>
+
+        print(f"\n--- Running Task: VIDEO ---")
         run_video_processing(config, detector_tracker, reid_model, gallery, args)
     except Exception as e: print(f"Error in video task: {e}"); import traceback; traceback.print_exc(); sys.exit(1)
     print(f"--- Task VIDEO Finished ---")
@@ -171,6 +214,32 @@ def run_live_task(config, args):
         print(f"Models Initialized (Load Time: {time.time() - start_load_time:.2f}s)")
         print(f"Effective Settings: ReRank={config['reid']['use_re_ranking']}, TargetFPS={config['reid'].get('target_fps')}, Batch={config['reid'].get('reid_batch_size')}")
 
+        # <<< --- THÊM BƯỚC WARM-UP MODEL ReID (Giống hệt phần video) --- >>>
+        if config['reid'].get('use_torch_compile', False) or True:
+            print("\n--- Warming up ReID model ---")
+            warmup_start_time = time.time()
+            try:
+                reid_cfg = config['reid']
+                device = reid_cfg['device']
+                input_h, input_w = reid_cfg['reid_input_size']
+                batch_size = reid_cfg.get('reid_batch_size', 16)
+                num_warmup_runs = 5
+                dummy_input_batch = torch.zeros((batch_size, 3, input_h, input_w), dtype=torch.float32).to(device)
+                print(f"Running {num_warmup_runs} warmup inferences with batch size {batch_size} on device {device}...")
+                for _ in range(num_warmup_runs):
+                    with torch.no_grad():
+                        # Gọi hàm inference chính để warmup cả tiền xử lý bên trong nó nếu có
+                        # Cần tạo list numpy giả từ tensor dummy
+                        dummy_np_list = [dummy_input_batch[i:i+1].cpu().numpy().transpose(0,2,3,1)[0] for i in range(batch_size)]
+                        _ = reid_model.extract_features_optimized(dummy_np_list)
+
+                if 'cuda' in str(device): torch.cuda.synchronize()
+                warmup_time = time.time() - warmup_start_time
+                print(f"--- ReID Model Warmup Finished (Time: {warmup_time:.2f} seconds) ---")
+            except Exception as e:
+                print(f"Warning: ReID model warmup failed: {e}")
+        # <<< --- KẾT THÚC BƯỚC WARM-UP --- >>>
+        print(f"\n--- Running Task: LIVE ---")
         # Gọi hàm xử lý live stream từ scripts/process_live_stream.py
         run_live_stream_processing(config, detector_tracker, reid_model, gallery, args)
     except Exception as e:

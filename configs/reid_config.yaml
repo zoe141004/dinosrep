@@ -18,7 +18,7 @@ device: 'auto'
 # --- Processing Parameters ---
 reid_batch_size: 64
 target_fps: 30
-reid_interval: 50 # Chạy ReID mỗi 10 frame trong video
+reid_interval: 100 # Chạy ReID mỗi 10 frame trong video
 similarity_threshold: 0.88 # Ngưỡng cosine similarity ban đầu
 use_re_ranking: False # Tắt cho video pipeline, bật nếu chạy script xử lý folder ảnh
 k1: 10 # Tham số re-ranking

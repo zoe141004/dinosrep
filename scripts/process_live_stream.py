@@ -3,6 +3,8 @@ import argparse
 import os
 import sys
 import torch
+import torch._dynamo
+torch._dynamo.config.suppress_errors = True
 import numpy as np
 import cv2
 import time
