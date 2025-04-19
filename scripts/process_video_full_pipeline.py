@@ -197,18 +197,31 @@ def run_video_processing(config, detector_tracker, reid_model, gallery, args):
             # --- 3. Visualization ---
             output_frame = frame.copy()
             output_frame = draw_tracked_results(output_frame, tracking_results, track_id_to_reid_id)
+            overall_fps_display = 1.0 / loop_processing_time if loop_processing_time > 0 else 0
             output_frame = draw_fps(output_frame, overall_fps_display, reid_fps_display if reid_processed_this_frame else None)
 
             # --- 4. Display/Save ---
+            display_frame = output_frame # Mặc định dùng frame gốc
+
             if not args.no_display:
                 try:
-                     cv2.imshow("Person ReID Pipeline - Press 'q' to Quit", output_frame)
-                     if cv2.waitKey(1) & 0xFF == ord('q'):
-                         print("Processing stopped by user ('q' pressed).")
-                         break
+                    # --- THÊM CODE RESIZE Ở ĐÂY ---
+                    # Tính toán kích thước hiển thị mới (ví dụ: giảm một nửa, hoặc đặt chiều rộng cố định)
+                    display_width = 1280 # Đặt chiều rộng mong muốn để hiển thị (ví dụ: 1280)
+                    # Giữ nguyên tỷ lệ khung hình
+                    display_height = int(output_frame.shape[0] * (display_width / output_frame.shape[1]))
+                    # Resize frame chỉ để hiển thị
+                    display_frame = cv2.resize(output_frame, (display_width, display_height), interpolation=cv2.INTER_AREA)
+                    # ------------------------------
+
+                    # Hiển thị frame đã resize
+                    cv2.imshow("Person ReID Pipeline - Press 'q' to Quit", display_frame)
+                    # WaitKey vẫn giữ nguyên
+                    # if cv2.waitKey(1) & 0xFF == ord('q'): ... (logic quit giữ nguyên)
+
                 except Exception as e:
-                     print(f"Error displaying frame: {e}. Disabling display.")
-                     args.no_display = True
+                    print(f"Error displaying frame: {e}. Disabling display.")
+                    args.no_display = True
 
             if video_writer is not None:
                  try:

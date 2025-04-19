@@ -198,7 +198,7 @@ class ReIDModel:
         # --- 2. Inference ---
         try:
             # Use autocast for mixed precision if enabled
-            with torch.cuda.amp.autocast(enabled=self.use_mixed_precision):
+            with torch.amp.autocast(device_type='cuda', dtype=torch.float16, enabled=self.use_mixed_precision):
                 # Model forward pass
                 features = self.model(input_batch)
 
@@ -239,7 +239,7 @@ class ReIDModel:
              input_tensor = self.standard_transform(image).unsqueeze(0).to(self.device)
 
              # Inference with optional mixed precision
-             with torch.cuda.amp.autocast(enabled=self.use_mixed_precision):
+             with torch.amp.autocast(device_type='cuda', dtype=torch.float16, enabled=self.use_mixed_precision):
                   feature = self.model(input_tensor)
 
              # L2 Normalize

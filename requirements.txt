@@ -30,3 +30,4 @@ matplotlib # Cần cho script xử lý folder ảnh nếu có hiển thị
 opencv-python
 opencv-contrib-python
 timm
+streamlink
