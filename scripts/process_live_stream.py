@@ -54,15 +54,13 @@ def run_live_stream_processing(config, detector_tracker, reid_model, gallery, ar
         args (argparse.Namespace): Parsed arguments specific to the live task.
     """
     reid_cfg = config['reid']
-    # yolo_cfg = config['yolo'] # Có thể cần nếu có tham số yolo dùng ở đây
+    yolo_cfg = config['yolo'] # Có thể cần nếu có tham số yolo dùng ở đây
 
     # --- Lấy các tham số hiệu quả (đã được override bởi args trong run.py nếu có) ---
-    target_fps = reid_cfg.get('target_fps')
     reid_batch_size = reid_cfg.get('reid_batch_size', 64)
     reid_interval = reid_cfg.get('reid_interval', 10)
-    target_delay = (1.0 / target_fps) if target_fps and target_fps > 0 else 0.0
 
-    print(f"Effective Settings: Target FPS={target_fps if target_delay > 0 else 'Max'}, ReID Batch={reid_batch_size}, ReID Interval={reid_interval}")
+    print(f"Effective Settings: ReID Batch={reid_batch_size}, ReID Interval={reid_interval}")
     print(f"Effective Re-ranking for Live Task: {reid_cfg['use_re_ranking']}") # In giá trị re-ranking hiệu quả
 
     # --- 3. Connect to Live Stream ---
@@ -81,9 +79,55 @@ def run_live_stream_processing(config, detector_tracker, reid_model, gallery, ar
     video_writer = None
     frame_width, frame_height = 0, 0
     output_fps = 30.0 # Luôn dùng FPS cố định cho output live stream
+     # --- Xử lý "nháp" frame đầu tiên ---
+    first_frame_processed = False
+    print("\n--- Processing first frame (initialization/warmup) ---")
+    try:
+        ret_first, first_frame = cap.read()
+        if ret_first and first_frame is not None:
+            frame_count = 1 # Đặt frame_count ban đầu
+            # Lấy kích thước frame từ frame đầu tiên
+            if frame_height == 0 or frame_width == 0:
+                frame_height, frame_width = first_frame.shape[:2]
+                print(f"Stream Info detected: {frame_width}x{frame_height}")
+            # Chạy xử lý nháp
+            first_frame_rgb = cv2.cvtColor(first_frame, cv2.COLOR_BGR2RGB)
+            _ = detector_tracker.track_frame(first_frame_rgb)
+            with torch.no_grad():
+                 dummy_crops = [np.zeros((64, 32, 3), dtype=np.uint8)]
+                 _ = reid_model.extract_features_optimized(dummy_crops)
+                 if gallery.get_gallery_size() > 0:
+                     dummy_features = torch.zeros((1, config['reid']['expected_feature_dim']), device=config['reid']['device'])
+                     _ = gallery.assign_ids(dummy_features)
+            first_frame_processed = True
+            print("--- First frame processing finished ---")
 
+            # --- Khởi tạo Video Writer sau khi có kích thước ---
+            if args.output and frame_width > 0 and frame_height > 0:
+                try:
+                     video_writer = create_video_writer(args.output, frame_width, frame_height, output_fps)
+                except Exception as e: print(f"Warning: Could not create video writer. {e}"); args.output = None
+
+            # --- Khởi tạo cửa sổ hiển thị ---
+            window_name = "Live Stream ReID - Press 'q' to Quit"
+            if not args.no_display:
+                try:
+                    cv2.namedWindow(window_name, cv2.WINDOW_NORMAL)
+                    dummy_display = np.zeros((100, 100, 3), dtype=np.uint8)
+                    cv2.imshow(window_name, dummy_display)
+                    cv2.waitKey(1)
+                except Exception as e: args.no_display = True; print(f"Warning: Cannot create display window: {e}")
+
+        else:
+            print("Could not read the first frame from the stream.")
+            cap.release()
+            return
+    except Exception as e:
+         print(f"Error during first frame processing: {e}. Exiting.")
+         cap.release()
+         return
     # --- 5. Processing Loop ---
-    frame_count = 0
+    frame_count = 1
     start_time_pipeline = time.time()
     last_time_loop = start_time_pipeline
     reid_fps_display = 0.0
@@ -194,13 +238,6 @@ def run_live_stream_processing(config, detector_tracker, reid_model, gallery, ar
                  try: video_writer.write(output_frame)
                  except Exception as e: print(f"Error writing frame {frame_count}: {e}")
 
-            # --- Target FPS Delay ---
-            current_frame_end_time = time.time()
-            actual_processing_time = current_frame_end_time - current_time_loop
-            wait_time = target_delay - actual_processing_time
-            if wait_time > 0:
-                time.sleep(wait_time)
-
             # --- Quit Key Check ---
             if not args.no_display:
                  if cv2.waitKey(1) & 0xFF == ord('q'):
@@ -218,7 +255,7 @@ def run_live_stream_processing(config, detector_tracker, reid_model, gallery, ar
         avg_fps = frame_count / total_time if total_time > 1e-6 else 0
         print("\n--- Live Stream Processing Summary ---"); print(f"Processed approximately {frame_count} frames.")
         if total_time > 0: print(f"Total Processing Time: {total_time:.2f} seconds.")
-        if avg_fps > 0: print(f"Average Overall FPS (incl. delay): {avg_fps:.2f}")
+        if avg_fps > 0: print(f"Average Overall FPS : {avg_fps:.2f}")
         if gallery: print(f"Final Gallery Size: {gallery.get_gallery_size()}")
         print("Releasing resources...");
         if cap is not None: cap.release()

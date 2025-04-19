@@ -1,4 +1,4 @@
-# main_pipeline.py
+# scripts/process_video_full_pipeline.py
 import cv2
 import torch
 import numpy as np
@@ -6,13 +6,14 @@ import time
 import argparse
 import os
 from collections import defaultdict
-import torch._dynamo
-torch._dynamo.config.suppress_errors = True
-import math # Thêm import math để dùng ceil
+import torch._dynamo # <<< DÒNG BẠN ĐÃ THÊM >>>
+torch._dynamo.config.suppress_errors = True # <<< DÒNG BẠN ĐÃ THÊM >>>
+import math
 import sys
+
 # --- Import project modules ---
-# Đảm bảo có thể chạy độc lập
 try:
+    # Sử dụng import tuyệt đối (không có ..)
     from utils.config_loader import load_app_config
     from utils.video_io import read_video_frames, create_video_writer
     from utils.visualization import draw_tracked_results, draw_fps
@@ -21,14 +22,21 @@ try:
     from models.detection_tracking import DetectorTracker
     from models.reid import ReIDModel
 except ImportError:
-     # Xử lý trường hợp chạy từ thư mục khác hoặc cấu trúc thay đổi
-     if __name__ == '__main__': # Chỉ báo lỗi nếu đang chạy file này trực tiếp
-         print("Error: Could not import project modules in standalone mode.")
-         print("Ensure this script is run from the project root or add project root to PYTHONPATH.")
-         sys.exit(1)
-     else: # Nếu được import bởi file khác (như run.py), bỏ qua lỗi ở đây
-         pass
-
+     # Fallback cho standalone mode
+     if __name__ == '__main__':
+         project_root_for_standalone = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
+         if project_root_for_standalone not in sys.path:
+             sys.path.append(project_root_for_standalone)
+         from utils.config_loader import load_app_config
+         from utils.video_io import read_video_frames, create_video_writer
+         from utils.visualization import draw_tracked_results, draw_fps
+         from utils.image_processing import crop_image_numpy
+         from utils.gallery import ReIDGallery
+         from models.detection_tracking import DetectorTracker
+         from models.reid import ReIDModel
+     else: # Nếu được import bởi run.py, lỗi import ở đây là nghiêm trọng
+          print("Error: Could not perform relative import in process_video_full_pipeline.py when imported.")
+          raise
 
 # !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 # !!! HÀM CHÍNH ĐỂ XỬ LÝ VIDEO (ĐƯỢC GỌI BỞI run.py) !!!
@@ -36,99 +44,84 @@ except ImportError:
 def run_video_processing(config, detector_tracker, reid_model, gallery, args):
     """
     Runs the video processing loop using pre-initialized models and gallery.
-
-    Args:
-        config (dict): The loaded application configuration.
-        detector_tracker (DetectorTracker): Initialized detector/tracker model.
-        reid_model (ReIDModel): Initialized ReID model.
-        gallery (ReIDGallery): Initialized ReID gallery.
-        args (argparse.Namespace): Parsed arguments specific to the video task.
+    Processes video at maximum possible speed.
     """
     reid_cfg = config['reid']
-    yolo_cfg = config['yolo'] # Không cần dùng trực tiếp ở đây nữa
+    yolo_cfg = config['yolo'] # Có thể dùng sau này
 
-     # --- Lấy các config mới ---
-    target_fps = reid_cfg.get('target_fps') # Lấy giá trị từ config
-    reid_batch_size = reid_cfg.get('reid_batch_size', 64) # Lấy giá trị, mặc định 64 nếu không có
-
-    # Tính toán độ trễ mục tiêu nếu target_fps được đặt
-    target_delay = 0.0
-    if target_fps is not None and target_fps > 0:
-        target_delay = 1.0 / target_fps
-        print(f"Target FPS set to: {target_fps:.2f} (Delay: {target_delay:.4f}s)")
-    else:
-        print("Target FPS not set or invalid. Running at maximum speed.")
-    print(f"ReID Batch Size: {reid_batch_size}")
+    # --- Lấy các config cần thiết ---
+    reid_batch_size = reid_cfg.get('reid_batch_size', 64)
+    reid_interval = reid_cfg.get('reid_interval', 10)
+    print(f"Processing Parameters: ReID Interval={reid_interval}, ReID Batch Size={reid_batch_size}")
+    # --- ĐÃ XÓA target_fps và target_delay ---
 
     # --- Setup Video I/O ---
     video_path = args.input
     output_path = args.output
-
     try:
         frame_gen = read_video_frames(video_path)
-    except (FileNotFoundError, IOError) as e:
-        print(f"Error opening video input: {e}")
-        return # Thoát nếu không mở được video
-
-    video_writer = None
-    frame_width, frame_height = 0, 0
-
-    # Process first frame to get dimensions for writer
-    try:
-        first_frame = next(frame_gen)
-        if first_frame is None: raise StopIteration
+        first_frame = next(frame_gen, None) # Thêm None để xử lý video rỗng
+        if first_frame is None:
+             print(f"Error: Input video file {video_path} appears to be empty or cannot be read.")
+             return
         frame_height, frame_width = first_frame.shape[:2]
         print(f"Video Info: {frame_width}x{frame_height}")
-        # Recreate generator to start from the beginning
-        frame_gen = read_video_frames(video_path)
-    except StopIteration:
-        print(f"Error: Input video file {video_path} appears to be empty.")
-        return
-    except Exception as e:
-        print(f"Error reading first frame: {e}")
-        return
-
-    # Create Video Writer
-    if output_path:
-        try:
+        frame_gen = read_video_frames(video_path) # Reset generator
+        video_writer = None
+        if output_path:
             cap_temp = cv2.VideoCapture(video_path)
             fps = cap_temp.get(cv2.CAP_PROP_FPS) if cap_temp.isOpened() else 30.0
             cap_temp.release()
             if fps <= 0: fps = 30.0
             video_writer = create_video_writer(output_path, frame_width, frame_height, fps)
-        except (IOError, ValueError, Exception) as e:
-             print(f"Warning: Could not create video writer for {output_path}. Error: {e}")
-             output_path = None
+    except (FileNotFoundError, IOError, StopIteration, Exception) as e:
+        print(f"Error setting up video I/O: {e}")
+        return
+
+    # --- Xử lý "nháp" frame đầu tiên ---
+    first_frame_processed = False
+    if first_frame is not None:
+        print("\n--- Processing first frame (initialization/warmup) ---")
+        try:
+            frame_count = 1 # Đặt frame_count là 1 cho frame đầu
+            first_frame_rgb = cv2.cvtColor(first_frame, cv2.COLOR_BGR2RGB)
+            _ = detector_tracker.track_frame(first_frame_rgb)
+            # Chạy ReID thử (không cần thiết phải lấy đúng crop)
+            with torch.no_grad():
+                dummy_crops = [np.zeros((64, 32, 3), dtype=np.uint8)]
+                _ = reid_model.extract_features_optimized(dummy_crops)
+                if gallery.get_gallery_size() > 0:
+                    dummy_features = torch.zeros((1, config['reid']['expected_feature_dim']), device=config['reid']['device'])
+                    _ = gallery.assign_ids(dummy_features)
+            first_frame_processed = True
+            print("--- First frame processing finished ---")
+        except Exception as e:
+             print(f"Warning: Error during first frame processing: {e}. Continuing...")
 
     # --- Processing Loop Variables ---
-    frame_count = 0
-    start_time_pipeline = time.time()
+    frame_count = 0 # Reset frame_count cho vòng lặp chính nếu frame đầu được xử lý
+    if first_frame_processed: frame_count = 1 # Hoặc bắt đầu từ 1 nếu muốn giữ đúng số frame
+
+    start_time_pipeline = time.time() # Bắt đầu tính giờ từ đây
     last_time_loop = start_time_pipeline
     reid_fps_display = 0.0
     track_id_to_reid_id = {}
-    reid_interval = reid_cfg.get('reid_interval', 10)
 
-    print(f"Starting video processing loop (using pre-loaded models)...")
-    print(f" - Input: {video_path}")
-    print(f" - Output: {output_path if output_path else 'Disabled'}")
-    print(f" - ReID Interval: {reid_interval} frames")
+    print(f"\nStarting main video processing loop...")
     if not args.no_display: print(f" - Press 'q' in the display window to quit.")
     # ==============================================================
     #                     MAIN PROCESSING LOOP
     # ==============================================================
     try:
-        for frame in frame_gen:
+        for frame in frame_gen: # Bắt đầu từ frame thứ 2 nếu frame đầu đã xử lý
             frame_count += 1
             current_time_loop = time.time()
-            # Tính thời gian thực tế xử lý vòng lặp trước (trước khi delay)
             loop_processing_time = current_time_loop - last_time_loop
-
-            # --- Reset last_time_loop for next iteration's calculation ---
             last_time_loop = current_time_loop
 
             if frame is None: continue
 
-            # --- 1. Detection & Tracking --- (Giữ nguyên)
+            # --- 1. Detection & Tracking ---
             frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
             tracking_results = detector_tracker.track_frame(frame_rgb)
 
@@ -138,58 +131,30 @@ def run_video_processing(config, detector_tracker, reid_model, gallery, args):
                 try:
                     boxes_xyxy = tracking_results.boxes.xyxy.cpu().numpy()
                     track_ids_in_frame = tracking_results.boxes.id.cpu().numpy().astype(int)
-                except Exception as e:
-                    print(f"Error accessing tracking results in frame {frame_count}: {e}")
-                    track_ids_in_frame = []
+                except Exception as e: track_ids_in_frame = []
 
                 if len(track_ids_in_frame) > 0 and frame_count % reid_interval == 0:
                     reid_processed_this_frame = True
                     start_reid_time = time.time()
-
-                    all_crops_for_reid = []
-                    all_track_ids_for_reid = []
-
-                    # Thu thập tất cả các crop hợp lệ trong frame
+                    all_crops_for_reid, all_track_ids_for_reid = [], []
                     for i, track_id in enumerate(track_ids_in_frame):
-                        bbox = boxes_xyxy[i]
-                        crop = crop_image_numpy(frame_rgb, bbox)
+                        bbox = boxes_xyxy[i]; crop = crop_image_numpy(frame_rgb, bbox)
                         if crop is not None:
-                            all_crops_for_reid.append(crop)
-                            all_track_ids_for_reid.append(track_id)
+                            all_crops_for_reid.append(crop); all_track_ids_for_reid.append(track_id)
 
-                    # --- Xử lý ReID theo batch ---
                     if all_crops_for_reid:
                         num_batches = math.ceil(len(all_crops_for_reid) / reid_batch_size)
-                        # print(f"Processing {len(all_crops_for_reid)} crops in {num_batches} batches (size {reid_batch_size})") # Optional log
-
                         for i_batch in range(num_batches):
-                            # Lấy index bắt đầu và kết thúc cho batch hiện tại
-                            start_idx = i_batch * reid_batch_size
-                            end_idx = min((i_batch + 1) * reid_batch_size, len(all_crops_for_reid))
-
-                            # Lấy batch crops và track IDs tương ứng
-                            batch_crops = all_crops_for_reid[start_idx:end_idx]
-                            batch_track_ids = all_track_ids_for_reid[start_idx:end_idx]
-
-                            if not batch_crops: continue # Bỏ qua nếu batch rỗng (dù không nên xảy ra)
-
-                            # Trích xuất features cho batch hiện tại
+                            start_idx, end_idx = i_batch * reid_batch_size, min((i_batch + 1) * reid_batch_size, len(all_crops_for_reid))
+                            batch_crops, batch_track_ids = all_crops_for_reid[start_idx:end_idx], all_track_ids_for_reid[start_idx:end_idx]
+                            if not batch_crops: continue
                             query_features_batch = reid_model.extract_features_optimized(batch_crops)
-
                             if query_features_batch is not None:
-                                # Gán IDs cho batch features này
                                 assigned_reid_ids_batch = gallery.assign_ids(query_features_batch)
-
-                                # Cập nhật mapping cho batch này
                                 if len(assigned_reid_ids_batch) == len(batch_track_ids):
                                     for j, track_id in enumerate(batch_track_ids):
-                                        if assigned_reid_ids_batch[j] != -1:
-                                             track_id_to_reid_id[track_id] = assigned_reid_ids_batch[j]
-                                else:
-                                     print(f"CRITICAL WARNING: ReID results/tracks mismatch within batch {i_batch+1}/{num_batches} in frame {frame_count}.")
-                            # else: print(f"Feature extraction returned None for batch {i_batch+1}/{num_batches} frame {frame_count}.")
-
-                    # --- Kết thúc xử lý ReID cho frame ---
+                                        if assigned_reid_ids_batch[j] != -1: track_id_to_reid_id[track_id] = assigned_reid_ids_batch[j]
+                                else: print(f"CRITICAL WARNING: ReID results/tracks mismatch batch {i_batch+1}/{num_batches} frame {frame_count}.")
                     end_reid_time = time.time()
                     reid_processing_time = end_reid_time - start_reid_time
                     reid_fps_display = 1.0 / reid_processing_time if reid_processing_time > 1e-6 else 0
@@ -201,79 +166,48 @@ def run_video_processing(config, detector_tracker, reid_model, gallery, args):
             output_frame = draw_fps(output_frame, overall_fps_display, reid_fps_display if reid_processed_this_frame else None)
 
             # --- 4. Display/Save ---
-            display_frame = output_frame # Mặc định dùng frame gốc
-
+            display_frame = output_frame
             if not args.no_display:
                 try:
-                    # --- THÊM CODE RESIZE Ở ĐÂY ---
-                    # Tính toán kích thước hiển thị mới (ví dụ: giảm một nửa, hoặc đặt chiều rộng cố định)
-                    display_width = 1280 # Đặt chiều rộng mong muốn để hiển thị (ví dụ: 1280)
-                    # Giữ nguyên tỷ lệ khung hình
-                    display_height = int(output_frame.shape[0] * (display_width / output_frame.shape[1]))
-                    # Resize frame chỉ để hiển thị
-                    display_frame = cv2.resize(output_frame, (display_width, display_height), interpolation=cv2.INTER_AREA)
-                    # ------------------------------
-
-                    # Hiển thị frame đã resize
+                    display_width = 1280 # Hoặc giá trị khác bạn muốn
+                    if output_frame.shape[1] > display_width: # Chỉ resize nếu ảnh lớn
+                        display_height = int(output_frame.shape[0] * (display_width / output_frame.shape[1]))
+                        display_frame = cv2.resize(output_frame, (display_width, display_height), interpolation=cv2.INTER_AREA)
                     cv2.imshow("Person ReID Pipeline - Press 'q' to Quit", display_frame)
-                    # WaitKey vẫn giữ nguyên
-                    # if cv2.waitKey(1) & 0xFF == ord('q'): ... (logic quit giữ nguyên)
-
-                except Exception as e:
-                    print(f"Error displaying frame: {e}. Disabling display.")
-                    args.no_display = True
+                except Exception as e: args.no_display = True; print(f"Error displaying frame: {e}. Display disabled.")
 
             if video_writer is not None:
-                 try:
-                     video_writer.write(output_frame)
-                 except Exception as e:
-                     print(f"Error writing frame {frame_count}: {e}")
-            # --- 5. Target FPS Delay ---
-            # Tính thời gian cần chờ để đạt target_delay
-            current_frame_end_time = time.time()
-            actual_processing_time = current_frame_end_time - current_time_loop # Thời gian xử lý thực tế của vòng lặp này
-            wait_time = target_delay - actual_processing_time
+                 try: video_writer.write(output_frame) # Luôn lưu frame gốc
+                 except Exception as e: print(f"Error writing frame {frame_count}: {e}")
 
-            # print(f"Frame {frame_count}: Proc Time: {actual_processing_time:.4f}s, Wait Time: {wait_time:.4f}s") # Debug log
+            # --- ĐÃ XÓA LOGIC time.sleep ---
 
-            if wait_time > 0:
-                time.sleep(wait_time) # Delay nếu xử lý xong sớm hơn target
-
-            # --- Xử lý Quit Key sau delay (nếu có hiển thị) ---
+            # --- Xử lý Quit Key ---
             if not args.no_display:
                  if cv2.waitKey(1) & 0xFF == ord('q'):
                       print("Processing stopped by user ('q' pressed).")
                       break
 
-    except KeyboardInterrupt:
-        print("\nProcessing interrupted by user (Ctrl+C).")
-    except Exception as e:
-        print(f"\nAn unexpected error occurred during processing loop: {e}")
-        import traceback
-        traceback.print_exc()
+    except KeyboardInterrupt: print("\nProcessing interrupted by user (Ctrl+C).")
+    except Exception as e: print(f"\nAn unexpected error occurred: {e}"); import traceback; traceback.print_exc()
     finally:
-        end_time_pipeline = time.time()
-        total_time = end_time_pipeline - start_time_pipeline
-        avg_fps = frame_count / total_time if total_time > 1e-6 else 0
+        # --- Cleanup ---
+        end_time_pipeline = time.time(); total_time = end_time_pipeline - start_time_pipeline # Thời gian chỉ tính từ sau frame 1
+        final_processed_count = frame_count - 1 if first_frame_processed else frame_count # Số frame thực sự trong vòng lặp chính
+        avg_fps = final_processed_count / total_time if total_time > 1e-6 and final_processed_count > 0 else 0
         print("\n--- Video Processing Summary ---")
-        print(f"Processed {frame_count} frames.")
-        if total_time > 0: print(f"Total Processing Time: {total_time:.2f} seconds.")
-        # Avg FPS này sẽ bị ảnh hưởng bởi target_fps nếu được đặt
-        if avg_fps > 0: print(f"Average Overall FPS (incl. delay): {avg_fps:.2f}")
+        print(f"Processed {final_processed_count} frames (after initial warmup frame).")
+        if total_time > 0: print(f"Total Processing Time (excluding first frame): {total_time:.2f} seconds.")
+        if avg_fps > 0: print(f"Average Overall FPS: {avg_fps:.2f}") # Bỏ (incl. delay)
         if gallery: print(f"Final Gallery Size: {gallery.get_gallery_size()}")
-        if video_writer is not None:
-            print("Releasing video writer...")
-            video_writer.release()
-            if output_path: print(f"Output video saved to: {output_path}")
-        cv2.destroyAllWindows()
-        print("Video processing finished.")
+        if video_writer is not None: print("Releasing video writer..."); video_writer.release()
+        if output_path and video_writer is not None: print(f"Output video saved to: {output_path}")
+        cv2.destroyAllWindows(); print("Processing finished.")
 
-# ==============================================================
-#     BLOCK ĐỂ CHẠY FILE NÀY ĐỘC LẬP (Standalone Mode)
-# ==============================================================
+# --- Block if __name__ == "__main__": để chạy độc lập ---
 if __name__ == "__main__":
-    # --- Argument Parser cho chế độ Standalone ---
     parser = argparse.ArgumentParser(description="Run Person ReID Pipeline on Video (Standalone Script)")
+    # --- Định nghĩa args như cũ (không cần target-fps) ---
     parser.add_argument('--input', '-i', type=str, required=True, help='Path to the input video file.')
     parser.add_argument('--output', '-o', type=str, default='output/main_pipeline_output.mp4', help='Path to save the output video file.')
     parser.add_argument('--reid-config', type=str, default='configs/reid_config.yaml', help='Path to the ReID configuration file.')
@@ -281,24 +215,19 @@ if __name__ == "__main__":
     parser.add_argument('--no-display', action='store_true', help='Do not display the video window.')
     args = parser.parse_args()
 
-    # --- Load Configs và Models (Load lại từ đầu) ---
-    if not os.path.isfile(args.input):
-        print(f"Error: Input video file not found at '{args.input}'")
+    if not os.path.isfile(args.input): print(f"Error: Input video file not found at '{args.input}'")
     else:
         print("[Standalone Mode] Loading configs and models...")
         try:
-            # Load config
             config = load_app_config(args.reid_config, args.yolo_config)
-            # Initialize models
             detector_tracker = DetectorTracker(config['yolo'])
             reid_model = ReIDModel(config['reid'])
             gallery = ReIDGallery(config['reid'])
             print("[Standalone Mode] Models and Gallery loaded.")
-            # Gọi hàm xử lý chính
+            # --- Thêm bước Warmup và xử lý frame đầu tiên cho Standalone Mode ---
+            # (Bạn có thể copy khối code xử lý frame đầu tiên từ hàm run_video_processing vào đây nếu muốn
+            #  chế độ standalone cũng được warmup, nhưng sẽ làm code dài hơn)
+            # --- Hoặc gọi thẳng hàm xử lý chính ---
             run_video_processing(config, detector_tracker, reid_model, gallery, args)
-        except ImportError:
-             print("Import Error in Standalone Mode. Make sure running from project root or PYTHONPATH is set.")
-        except (FileNotFoundError, RuntimeError, ValueError, Exception) as e:
-             print(f"[Standalone Mode] Error during initialization or processing: {e}")
-             import traceback
-             traceback.print_exc()
+        except ImportError: print("Import Error in Standalone Mode...")
+        except Exception as e: print(f"[Standalone Mode] Error: {e}"); import traceback; traceback.print_exc()
