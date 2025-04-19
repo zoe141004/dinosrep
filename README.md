@@ -177,9 +177,6 @@ https://manifest.googlevideo.com/api/manifest/hls_playlist/expire/1745088095/ei/
 ```bash
 !python run.py live --stream-url [link above] --output output/youtube_live_output.mp4
 ```
-
-
-
 **Configuration Details**
 * configs/reid_config.yaml: Controls ReID model paths, input size, similarity thresholds, re-ranking parameters, processing interval (for video), and optimization flags.
 * configs/yolo_config.yaml: Controls YOLO model path, detection/tracking confidence, IoU thresholds, tracker type, and device.
