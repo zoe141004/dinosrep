@@ -8,6 +8,8 @@ import os
 from collections import defaultdict
 import torch._dynamo
 torch._dynamo.config.suppress_errors = True
+import math # Thêm import math để dùng ceil
+import sys
 # --- Import project modules ---
 # Đảm bảo có thể chạy độc lập
 try:
@@ -43,7 +45,20 @@ def run_video_processing(config, detector_tracker, reid_model, gallery, args):
         args (argparse.Namespace): Parsed arguments specific to the video task.
     """
     reid_cfg = config['reid']
-    # yolo_cfg = config['yolo'] # Không cần dùng trực tiếp ở đây nữa
+    yolo_cfg = config['yolo'] # Không cần dùng trực tiếp ở đây nữa
+
+     # --- Lấy các config mới ---
+    target_fps = reid_cfg.get('target_fps') # Lấy giá trị từ config
+    reid_batch_size = reid_cfg.get('reid_batch_size', 64) # Lấy giá trị, mặc định 64 nếu không có
+
+    # Tính toán độ trễ mục tiêu nếu target_fps được đặt
+    target_delay = 0.0
+    if target_fps is not None and target_fps > 0:
+        target_delay = 1.0 / target_fps
+        print(f"Target FPS set to: {target_fps:.2f} (Delay: {target_delay:.4f}s)")
+    else:
+        print("Target FPS not set or invalid. Running at maximum speed.")
+    print(f"ReID Batch Size: {reid_batch_size}")
 
     # --- Setup Video I/O ---
     video_path = args.input
@@ -105,22 +120,20 @@ def run_video_processing(config, detector_tracker, reid_model, gallery, args):
         for frame in frame_gen:
             frame_count += 1
             current_time_loop = time.time()
-            loop_delta_time = current_time_loop - last_time_loop
+            # Tính thời gian thực tế xử lý vòng lặp trước (trước khi delay)
+            loop_processing_time = current_time_loop - last_time_loop
+
+            # --- Reset last_time_loop for next iteration's calculation ---
             last_time_loop = current_time_loop
-            overall_fps_display = 1.0 / loop_delta_time if loop_delta_time > 0 else 0
 
-            if frame is None:
-                print(f"Warning: Frame {frame_count} is None. Skipping.")
-                continue
+            if frame is None: continue
 
-            # --- 1. Detection & Tracking ---
+            # --- 1. Detection & Tracking --- (Giữ nguyên)
             frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-            tracking_results = detector_tracker.track_frame(frame_rgb) # Sử dụng model đã truyền vào
+            tracking_results = detector_tracker.track_frame(frame_rgb)
 
             # --- 2. Re-Identification (Periodically) ---
             reid_processed_this_frame = False
-            current_track_ids_in_frame = []
-
             if tracking_results and tracking_results.boxes is not None and tracking_results.boxes.id is not None:
                 try:
                     boxes_xyxy = tracking_results.boxes.xyxy.cpu().numpy()
@@ -133,31 +146,50 @@ def run_video_processing(config, detector_tracker, reid_model, gallery, args):
                     reid_processed_this_frame = True
                     start_reid_time = time.time()
 
-                    np_crops_to_reid = []
-                    track_ids_for_reid = []
+                    all_crops_for_reid = []
+                    all_track_ids_for_reid = []
 
+                    # Thu thập tất cả các crop hợp lệ trong frame
                     for i, track_id in enumerate(track_ids_in_frame):
                         bbox = boxes_xyxy[i]
                         crop = crop_image_numpy(frame_rgb, bbox)
                         if crop is not None:
-                            np_crops_to_reid.append(crop)
-                            track_ids_for_reid.append(track_id)
+                            all_crops_for_reid.append(crop)
+                            all_track_ids_for_reid.append(track_id)
 
-                    if np_crops_to_reid:
-                        # Sử dụng reid_model đã truyền vào
-                        query_features_batch = reid_model.extract_features_optimized(np_crops_to_reid)
+                    # --- Xử lý ReID theo batch ---
+                    if all_crops_for_reid:
+                        num_batches = math.ceil(len(all_crops_for_reid) / reid_batch_size)
+                        # print(f"Processing {len(all_crops_for_reid)} crops in {num_batches} batches (size {reid_batch_size})") # Optional log
 
-                        if query_features_batch is not None:
-                            # Sử dụng gallery đã truyền vào
-                            assigned_reid_ids = gallery.assign_ids(query_features_batch)
+                        for i_batch in range(num_batches):
+                            # Lấy index bắt đầu và kết thúc cho batch hiện tại
+                            start_idx = i_batch * reid_batch_size
+                            end_idx = min((i_batch + 1) * reid_batch_size, len(all_crops_for_reid))
 
-                            if len(assigned_reid_ids) == len(track_ids_for_reid):
-                                for i, track_id in enumerate(track_ids_for_reid):
-                                    if assigned_reid_ids[i] != -1:
-                                         track_id_to_reid_id[track_id] = assigned_reid_ids[i]
-                            else:
-                                 print(f"CRITICAL WARNING: ReID results/tracks mismatch frame {frame_count}.")
+                            # Lấy batch crops và track IDs tương ứng
+                            batch_crops = all_crops_for_reid[start_idx:end_idx]
+                            batch_track_ids = all_track_ids_for_reid[start_idx:end_idx]
 
+                            if not batch_crops: continue # Bỏ qua nếu batch rỗng (dù không nên xảy ra)
+
+                            # Trích xuất features cho batch hiện tại
+                            query_features_batch = reid_model.extract_features_optimized(batch_crops)
+
+                            if query_features_batch is not None:
+                                # Gán IDs cho batch features này
+                                assigned_reid_ids_batch = gallery.assign_ids(query_features_batch)
+
+                                # Cập nhật mapping cho batch này
+                                if len(assigned_reid_ids_batch) == len(batch_track_ids):
+                                    for j, track_id in enumerate(batch_track_ids):
+                                        if assigned_reid_ids_batch[j] != -1:
+                                             track_id_to_reid_id[track_id] = assigned_reid_ids_batch[j]
+                                else:
+                                     print(f"CRITICAL WARNING: ReID results/tracks mismatch within batch {i_batch+1}/{num_batches} in frame {frame_count}.")
+                            # else: print(f"Feature extraction returned None for batch {i_batch+1}/{num_batches} frame {frame_count}.")
+
+                    # --- Kết thúc xử lý ReID cho frame ---
                     end_reid_time = time.time()
                     reid_processing_time = end_reid_time - start_reid_time
                     reid_fps_display = 1.0 / reid_processing_time if reid_processing_time > 1e-6 else 0
@@ -183,6 +215,22 @@ def run_video_processing(config, detector_tracker, reid_model, gallery, args):
                      video_writer.write(output_frame)
                  except Exception as e:
                      print(f"Error writing frame {frame_count}: {e}")
+            # --- 5. Target FPS Delay ---
+            # Tính thời gian cần chờ để đạt target_delay
+            current_frame_end_time = time.time()
+            actual_processing_time = current_frame_end_time - current_time_loop # Thời gian xử lý thực tế của vòng lặp này
+            wait_time = target_delay - actual_processing_time
+
+            # print(f"Frame {frame_count}: Proc Time: {actual_processing_time:.4f}s, Wait Time: {wait_time:.4f}s") # Debug log
+
+            if wait_time > 0:
+                time.sleep(wait_time) # Delay nếu xử lý xong sớm hơn target
+
+            # --- Xử lý Quit Key sau delay (nếu có hiển thị) ---
+            if not args.no_display:
+                 if cv2.waitKey(1) & 0xFF == ord('q'):
+                      print("Processing stopped by user ('q' pressed).")
+                      break
 
     except KeyboardInterrupt:
         print("\nProcessing interrupted by user (Ctrl+C).")
@@ -191,15 +239,15 @@ def run_video_processing(config, detector_tracker, reid_model, gallery, args):
         import traceback
         traceback.print_exc()
     finally:
-        # --- 5. Cleanup ---
         end_time_pipeline = time.time()
         total_time = end_time_pipeline - start_time_pipeline
         avg_fps = frame_count / total_time if total_time > 1e-6 else 0
         print("\n--- Video Processing Summary ---")
         print(f"Processed {frame_count} frames.")
         if total_time > 0: print(f"Total Processing Time: {total_time:.2f} seconds.")
-        if avg_fps > 0: print(f"Average Overall FPS: {avg_fps:.2f}")
-        if gallery: print(f"Final Gallery Size: {gallery.get_gallery_size()} unique IDs.") # Check if gallery exists
+        # Avg FPS này sẽ bị ảnh hưởng bởi target_fps nếu được đặt
+        if avg_fps > 0: print(f"Average Overall FPS (incl. delay): {avg_fps:.2f}")
+        if gallery: print(f"Final Gallery Size: {gallery.get_gallery_size()}")
         if video_writer is not None:
             print("Releasing video writer...")
             video_writer.release()
