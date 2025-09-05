@@ -1,5 +1,3 @@
-Markdown
-
 # Person Detection, Tracking, and Re-Identification Pipeline
 
 This project implements a pipeline for detecting people in a video, tracking them across frames, and assigning a unique Re-Identification (ReID) number to each person using YOLOv8 for detection/tracking and CLIP-ReID for feature extraction. It also includes functionality to process a folder of pre-cropped person images for ReID.
